@@ -1,0 +1,86 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (c) 2022, Sylvain Huet, Ambermind
+// Minimacy (r) Demonstration for the MM-2350 board
+
+//------------------- imports and constants
+use driver.generic.display;;
+use driver.generic.spi.encX24j600.ethernet;;
+use baremetal.mm2350.boot;;
+
+// we count and display the number of accepted or blocked packets from left, and blocked packets from right 
+var CountLeftBlocked= 0;;
+var CountLeftOk= 0;;
+var CountRightBlocked= 0;;
+
+//-------------------Network diode
+
+// we filter ethernet frames and accept only UDP frame with broadcast MAC destination
+fun udpBroadcastFilter(frame)=
+	let strLeft(frame, 6) -> macDest in
+	if macDest=="\$ff\$ff\$ff\$ff\$ff\$ff" then
+	let strRead16Msb(frame, 12) -> protocol in
+	if protocol==0x0800 then	// IP
+	let strRead8(frame, 23) -> ipType in
+	ipType==17;;	// UDP
+
+// ethernet initialization simply involves defining the operations to be performed
+// when a frame is received from the left and from the right
+fun ethInit ()=
+	encX24j600OnReceive(ethLeft(), lambda(frame)= 
+		if udpBroadcastFilter(frame) then (
+			// we transfer and count filtered frames from left to right
+			encX24j600Send(ethRight(), frame);
+			set CountLeftOk=CountLeftOk+1;	
+		)
+		else set CountLeftBlocked=CountLeftBlocked+1;
+	);
+	encX24j600OnReceive(ethRight(), lambda(frame)=
+		// we block everything from right
+		set CountRightBlocked=CountRightBlocked+1;
+	);;
+//-------------------GUI
+const DIODE_Y=37;;
+
+fun triangleDraw(x0, y0, len)=
+	// we draw the triangle that is part of the diode symbol, pointing to the right
+	for i=1;i<=len do
+		let x0-i -> x in
+		bitmapLine(uiBuffer(), x, y0-i, x, y0+i, 0xffffff, nil);;
+
+fun diodeDraw()=
+	// we display an horizontal diode symbol from left to right
+	bitmapLine(uiBuffer(), 0, DIODE_Y, 127, DIODE_Y, 0xffffff, nil);
+	triangleDraw(64, DIODE_Y, 7);
+	bitmapLine(uiBuffer(), 64, DIODE_Y-7, 64, DIODE_Y+7, 0xffffff, nil);;
+
+fun uiInit()=
+	// we start the UI and display the background on which we will periodically draw the counters and the link status
+	uiStart(0, 0, 128, 64, nil, "Diode");
+	bitmapErase(uiBuffer(), 0);
+	drawStringCenter(64, 0, "Packet counter", false);
+	diodeDraw();
+	bitmapFillRectangle(uiBuffer(), 0, 55, nil, nil, 0xffffff, nil);
+	drawStringCenter(64, 56, "UDP broadcast diode", true);
+	uiUpdate();;
+
+fun counterRedraw()=
+	drawString(0, 14, strFormat(">OK *", CountLeftOk), false);
+	drawString(0, 22, strFormat(">no *", CountLeftBlocked), false);
+	drawStringRight(128, 46, strFormat("* no<", CountRightBlocked), false);;
+
+fun linkStatusRedraw()=
+	// we draw white or black segments around the diode symbol on the horizontal line to show the link status
+	bitmapLine(uiBuffer(), 16, DIODE_Y, 31, DIODE_Y, if encX24j600LinkStatus(ethLeft()) then 0xffffff, nil);
+	bitmapLine(uiBuffer(), 96, DIODE_Y, 111, DIODE_Y, if encX24j600LinkStatus(ethRight()) then 0xffffff, nil);;
+
+fun uiLoop()=
+	// every second we redraw the counters and the link status
+	counterRedraw();
+	linkStatusRedraw();
+	uiUpdate();
+	onTimeout(1000, #uiLoop);;
+
+fun main ()=
+	uiInit();
+	ethInit();
+	threadStart("ui", #uiLoop);;

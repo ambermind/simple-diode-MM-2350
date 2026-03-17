@@ -1,0 +1,7 @@
+#ifdef MM2350Device
+fun main()= 
+	start("mm2350.diode.simple");;
+#else
+fun main()= 
+	echoLn "This programs runs only on the MM-2350 board. See: https://minimacy.net/MM-2350.html";;
+#endif
